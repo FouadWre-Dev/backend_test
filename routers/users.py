@@ -12,20 +12,27 @@ MANAGER = connectionmanager()
 
 
 @router.websocket("/ws/{client_id}")
-async def websocket_endpoint(ws:WebSocket,client_id:str) :
-    await MANAGER.accept(ws,client_id)
+async def websocket_endpoint(
+    ws: WebSocket,
+    client_id: str,
+):
+    await MANAGER.connect(ws, client_id)
 
     try:
         while True:
-            msg = ws.receive_json()
+            msg = await ws.receive_json()
+
             match msg.get("type"):
+
                 case "message":
-                    MANAGER.message(client_id)
+                    await MANAGER.send_message(
+                        client_id,
+                        msg.get("text", ""),
+                    )
 
-    except WebSocketDisconnect as err_desconnected :
-        print(err_desconnected.code)
-        MANAGER.desconnect(client_id)
-
+    except WebSocketDisconnect as exc:
+        print(f"Client {client_id} disconnected: {exc.code}")
+        MANAGER.disconnect(client_id)
 
 
 
