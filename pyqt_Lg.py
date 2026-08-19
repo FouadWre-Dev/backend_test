@@ -9,6 +9,8 @@ import os,sys,requests
 
 
 user_id = "azerty123456"
+webhock = "https://backend-test-03e7.onrender.com" #"http://127.0.0.1:8000"
+
 
 class generalInfo:
     def __init__(self):
@@ -104,9 +106,9 @@ class threadlogin(QThread):
 
     def run(self):
         self.status.emit("Loading ...")
-        self.msleep(300)
+        self.msleep(50)
         try:
-            rs = requests.post(f"http://127.0.0.1:8000/api/v1/login/{user_id}",
+            rs = requests.post(f"{webhock}/api/v1/login/{user_id}",
                             data={
                                 "username" : self.username,
                                 "password" : self.password,
@@ -137,9 +139,9 @@ class thread_sold(QThread):
 
     def run(self):
         self.status.emit("Loading ...")
-        self.msleep(150)
+        self.msleep(50)
         try:
-            rs = requests.get(f"http://127.0.0.1:8000/api/v1/sold",
+            rs = requests.get(f"{webhock}/api/v1/sold",
                             headers={
                                 "Authorization" : f"Bearer {self.token}",
                             },
