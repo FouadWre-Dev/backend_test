@@ -13,7 +13,7 @@ async def Lifespan(app:FastAPI):
 
     print("running")
     yield
-    print("end prog")
+    print("end")
 
 
 
