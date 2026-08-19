@@ -1,3 +1,6 @@
+pwdlib
+PyJWT
+Requests
 fastapi
 uvicorn[standard]
 email-validator
