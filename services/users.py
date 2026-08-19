@@ -8,7 +8,7 @@ from datetime import datetime,timezone,timedelta
 
 
 p_hash = PasswordHash.recommended()
-keyjwt = "fouad_wre_1990"
+keyjwt = "FouadWre-Dev"
 algorithm = "HS256"
 
 
