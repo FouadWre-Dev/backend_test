@@ -1,7 +1,7 @@
-pwdlib
-PyJWT
-Requests
 fastapi
 uvicorn[standard]
-email-validator
+pwdlib[argon2]
+PyJWT
 python-multipart
+email-validator
+requests
