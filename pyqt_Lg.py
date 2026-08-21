@@ -12,12 +12,181 @@ user_id = "azerty123456"
 webhock = "https://backend-test-03e7.onrender.com" #"http://127.0.0.1:8000"
 
 
-class generalInfo:
-    def __init__(self):
-        self.accesstoken = None
 
 
-generalInfoManager = generalInfo()
+
+
+class APIClient:
+
+    def __init__(self, base_url: str, timeout: int = 15):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+        self.session = requests.Session()
+
+        self.access_token: str | None = None
+        self.refresh_token: str | None = None
+
+    def login(self, username: str, password: str) -> dict:
+
+        response = self.session.post(
+            f"{self.base_url}/api/v1/login/{user_id}",
+            data={
+                "username": username,
+                "password": password,
+            },
+            timeout=self.timeout,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        access_token = data.get("access_token")
+        refresh_token = data.get("refresh_token")
+
+        if not access_token or not refresh_token:
+            raise RuntimeError("Invalid login response.")
+
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+
+        return data
+
+    def refresh_access_token(self) -> dict:
+
+        if not self.refresh_token:
+            raise RuntimeError("No refresh token available.")
+
+        response = self.session.post(
+            f"{self.base_url}/refresh",
+            params={
+                "refresh_token": self.refresh_token,
+            },
+            timeout=self.timeout,
+        )
+
+        if response.status_code != 200:
+            self.clear_tokens()
+
+            raise RuntimeError(
+                "Refresh token expired. Login again."
+            )
+
+        data = response.json()
+
+        new_access_token = data.get("access_token")
+
+        if not new_access_token:
+            self.clear_tokens()
+
+            raise RuntimeError(
+                "Server returned an invalid access token."
+            )
+
+        self.access_token = new_access_token
+
+        return data
+
+    def request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        retry_on_401: bool = True,
+        **kwargs,
+    ) -> requests.Response:
+
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+
+        headers = kwargs.pop("headers", {}).copy()
+
+        if self.access_token:
+            headers["Authorization"] = (
+                f"Bearer {self.access_token}"
+            )
+
+        response = self.session.request(
+            method=method,
+            url=url,
+            headers=headers,
+            timeout=self.timeout,
+            **kwargs,
+        )
+
+        # --------------------------------------------------
+        # ACCESS TOKEN EXPIRED
+        # --------------------------------------------------
+
+        if (
+            response.status_code == 401
+            and retry_on_401
+            and self.refresh_token
+        ):
+
+            self.refresh_access_token()
+
+            headers["Authorization"] = (
+                f"Bearer {self.access_token}"
+            )
+
+            # Prevent infinite refresh loop.
+            return self.request(
+                method,
+                endpoint,
+                retry_on_401=False,
+                headers=headers,
+                **kwargs,
+            )
+
+        return response
+
+    def clear_tokens(self):
+
+        self.access_token = None
+        self.refresh_token = None
+
+    def logout(self):
+
+        self.clear_tokens()
+        self.session.cookies.clear()
+
+class ApiThread(QThread):
+
+    finished = pyqtSignal(object)
+    error = pyqtSignal(Exception)
+
+    def __init__(
+        self,
+        function,
+        *args,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+
+        try:
+            result = self.function(
+                *self.args,
+                **self.kwargs,
+            )
+
+            self.finished.emit(result)
+
+        except Exception as exc:
+            self.error.emit(exc)
+
+
+apiRequest = APIClient(webhock)
+
+
+
+
 
 
 class mainwindow(QWidget):
@@ -38,14 +207,23 @@ class mainwindow(QWidget):
         btn_1.clicked.connect(self.get_sold)
 
     def get_sold(self):
-        self.Tsold = thread_sold()
-        self.Tsold.status.connect(self.labelstatus.setText)
+
+        self.Tsold = ApiThread(
+            apiRequest.request,
+            "GET",
+            "/api/v1/sold",
+        )
+        self.Tsold.finished.connect(self.profile_received)
+        self.Tsold.error.connect(self.labelstatus.setText)
         self.Tsold.start()
 
+    def profile_received(self,response):
+        pass
 
 
 
-class mainPassKey(QWidget):
+
+class passwordwindow(QWidget):
     def __init__(self):
         super().__init__()
 
@@ -76,57 +254,21 @@ class mainPassKey(QWidget):
         if not self.username : self.text1.setFocus();return
         if not self.password : self.text2.setFocus();return
 
-        self.thread_login = threadlogin(
+        self.thread_login = ApiThread(
+            apiRequest.login,
             self.username,
-            self.password
+            self.password,
         )
-        self.thread_login.status.connect(self.labelstatus.setText)
-        self.thread_login.accessToken.connect(self.set_access)
+        self.thread_login.finished.connect(self.login_finished)
+        self.thread_login.error.connect(self.labelstatus.setText)
         self.thread_login.start()
 
-    def set_access(self,accesstoken):
-        generalInfoManager.accesstoken = accesstoken
+    def login_finished(self,result):
 
         self.close()
         self.mwindow = mainwindow()
         self.mwindow.show()
 
-
-
-
-
-class threadlogin(QThread):
-    status = pyqtSignal(str)
-    accessToken = pyqtSignal(str)
-    def __init__(self,username:str ,password:str):
-        super().__init__()
-
-        self.username = username
-        self.password = password
-
-    def run(self):
-        self.status.emit("Loading ...")
-        self.msleep(50)
-        try:
-            rs = requests.post(f"{webhock}/api/v1/login/{user_id}",
-                            data={
-                                "username" : self.username,
-                                "password" : self.password,
-                            },
-                            timeout=4
-                            )
-            response = rs.json()
-
-            _status = response.get("status")
-            if _status:
-                accesstoken = response.get("accesstoken")
-                self.accessToken.emit(accesstoken)
-
-            self.status.emit(response.get("text"))
-
-
-        except Exception as e:
-            self.status.emit(f"{e}")
 
 
 
@@ -165,10 +307,19 @@ class thread_sold(QThread):
 
 
 
+
+
+
+
+
+
+
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    w= mainPassKey()
+    w= passwordwindow()
     w.show()
 
     app.exec_()

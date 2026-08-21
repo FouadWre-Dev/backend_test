@@ -44,13 +44,16 @@ async def check_login(user_id:str, user=Depends(OAuth2PasswordRequestForm)):
             )
             ):
 
-            accesstoken = create_access_token(user_id)
+            access_token = create_access_token(user_id)
+            refresh_token = create_refresh_token(user_id)
 
             return {
-                "accesstoken" : accesstoken ,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
                 "status" : True,
                 "text": "welcom to hakim servers"
             }
+
         else:
             return responses.JSONResponse(
                 content={
@@ -85,6 +88,19 @@ async def reply_sold(token:str=Depends(bearerauth)):
 
 
 
+def create_refresh_token(user_id: str):
+    expiry = datetime.now(timezone.utc) + timedelta(days=7)
+    payload = {
+        "sub": user_id,
+        "type": "refresh",
+        "exp": expiry,
+    }
+
+    return jwt.encode(
+        payload,
+        keyjwt,
+        algorithm=algorithm,
+    )
 
 def create_access_token(user_id:str):
     expiry = datetime.now(timezone.utc) + timedelta(minutes=2)
