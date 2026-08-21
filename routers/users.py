@@ -1,10 +1,10 @@
 from fastapi import APIRouter,WebSocket,WebSocketDisconnect,Depends
-from services.appservice import connectionmanager
+from services.appservice import ConnectionManager
 from services.users import check_login,reply_sold
 
 router = APIRouter()
 
-MANAGER = connectionmanager()
+MANAGER = ConnectionManager()
 
 
 
