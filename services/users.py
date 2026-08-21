@@ -50,14 +50,12 @@ async def check_login(user_id:str, user=Depends(OAuth2PasswordRequestForm)):
             return {
                 "access_token": access_token,
                 "refresh_token": refresh_token,
-                "status" : True,
                 "text": "welcom to hakim servers"
             }
 
         else:
             return responses.JSONResponse(
                 content={
-                    "status" : False,
                     "text": "username or password invalid"
                 },
                 status_code=401
@@ -65,7 +63,6 @@ async def check_login(user_id:str, user=Depends(OAuth2PasswordRequestForm)):
 
     return responses.JSONResponse(
         content={
-            "status" : False,
             "text": "this user is not found .. pls contact me for activated compte"
         },
         status_code=401
@@ -81,7 +78,6 @@ async def reply_sold(token:str=Depends(bearerauth)):
     sold = user.get("sold")
 
     return {
-        "status": True,
         "username": username,
         "sold" : sold
     }
@@ -103,7 +99,7 @@ def create_refresh_token(user_id: str):
     )
 
 def create_access_token(user_id:str):
-    expiry = datetime.now(timezone.utc) + timedelta(minutes=2)
+    expiry = datetime.now(timezone.utc) + timedelta(minutes=15)
     payload = {
         "exp": expiry,
         "sub": user_id
@@ -115,23 +111,18 @@ def create_access_token(user_id:str):
 
     )
 
-def decode_access_token(token:str):
+def decode_access_token(token: str):
     try:
-        payload = jwt.decode(
+        return jwt.decode(
             token,
             keyjwt,
-            algorithms=[algorithm]
+            algorithms=[algorithm],
         )
 
-        return payload
-
     except InvalidTokenError:
-        return responses.JSONResponse(
-            content={
-                "status": False,
-                "text": "invalid token",
-            },
-            status_code=401
+        raise HTTPException(
+            status_code=401,
+            detail="invalid token",
         )
     
 

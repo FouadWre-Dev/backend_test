@@ -1,93 +1,217 @@
+from dataclasses import dataclass
+from typing import Any
 
+import requests
 
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
-    QApplication,QPushButton,QVBoxLayout,QHBoxLayout,
-    QLabel,QLineEdit,QTextEdit,QWidget
-                             )
-from PyQt5.QtCore import Qt,QThread,pyqtSignal
-import os,sys,requests
+    QApplication,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+import sys
 
 
-user_id = "azerty123456"
-webhock = "https://backend-test-03e7.onrender.com" #"http://127.0.0.1:8000"
+USER_ID = "azerty123456"
+BASE_URL = "https://backend-test-03e7.onrender.com"
+# BASE_URL = "http://127.0.0.1:8000"
 
 
-
-
+@dataclass
+class APIResult:
+    success: bool
+    status: str
+    data: Any = None
+    status_code: int | None = None
+    message: str | None = None
 
 
 class APIClient:
 
-    def __init__(self, base_url: str, timeout: int = 15):
+    def __init__(
+        self,
+        base_url: str,
+        user_id: str,
+        timeout: int = 15,
+    ):
         self.base_url = base_url.rstrip("/")
+        self.user_id = user_id
         self.timeout = timeout
 
         self.session = requests.Session()
 
         self.access_token: str | None = None
         self.refresh_token: str | None = None
+        
+    @staticmethod
+    def _json_response(response: requests.Response) -> dict:
 
-    def login(self, username: str, password: str) -> dict:
+        try:
+            data = response.json()
 
-        response = self.session.post(
-            f"{self.base_url}/api/v1/login/{user_id}",
-            data={
-                "username": username,
-                "password": password,
-            },
-            timeout=self.timeout,
-        )
+            if isinstance(data, dict):
+                return data
 
-        response.raise_for_status()
+            return {
+                "data": data
+            }
 
-        data = response.json()
+        except ValueError:
 
-        access_token = data.get("access_token")
-        refresh_token = data.get("refresh_token")
+            return {
+                "status": "invalid_server_response",
+                "message": response.text,
+            }
 
-        if not access_token or not refresh_token:
-            raise RuntimeError("Invalid login response.")
+    def login(
+        self,
+        username: str,
+        password: str,
+    ) -> APIResult:
 
-        self.access_token = access_token
-        self.refresh_token = refresh_token
-
-        return data
-
-    def refresh_access_token(self) -> dict:
-
-        if not self.refresh_token:
-            raise RuntimeError("No refresh token available.")
-
-        response = self.session.post(
-            f"{self.base_url}/refresh",
-            params={
-                "refresh_token": self.refresh_token,
-            },
-            timeout=self.timeout,
-        )
-
-        if response.status_code != 200:
-            self.clear_tokens()
-
-            raise RuntimeError(
-                "Refresh token expired. Login again."
+        try:
+            response = self.session.post(
+                f"{self.base_url}/api/v1/login/{self.user_id}",
+                data={
+                    "username": username,
+                    "password": password,
+                },
+                timeout=self.timeout,
             )
 
-        data = response.json()
+        except requests.RequestException as exc:
+
+            return APIResult(
+                success=False,
+                status="network_error",
+                message=str(exc),
+            )
+
+        data = self._json_response(response)
+
+        # AUTHENTICATION FAILED
+
+        if response.status_code == 401:
+
+            self.clear_tokens()
+
+            return APIResult(
+                success=False,
+                status="login_failed",
+                message=data.get(
+                    "text",
+                    "username or password is invalid",
+                ),
+                status_code=401,
+                data=data,
+            )
+
+        # OTHER HTTP ERRORS
+
+        if not response.ok:
+
+            return APIResult(
+                success=False,
+                status="server_error",
+                status_code=response.status_code,
+                data=data,
+                message=data.get("detail"),
+            )
+
+        # VALIDATE RESPONSE
+
+        access_token = data.get("access_token")
+
+        if not access_token:
+
+            return APIResult(
+                success=False,
+                status="invalid_login_response",
+                data=data,
+                message="Server did not return access_token.",
+            )
+
+        # SAVE TOKENS
+
+        self.access_token = access_token
+        self.refresh_token = data.get("refresh_token")
+
+        return APIResult(
+            success=True,
+            status="login_success",
+            message=data.get("text"),
+            data=data,
+            status_code=response.status_code,
+        )
+        
+    def refresh_access_token(self) -> APIResult:
+
+        if not self.refresh_token:
+
+            return APIResult(
+                success=False,
+                status="no_refresh_token",
+            )
+
+        try:
+            response = self.session.post(
+                f"{self.base_url}/refresh",
+                params={
+                    "refresh_token": self.refresh_token,
+                },
+                timeout=self.timeout,
+            )
+
+        except requests.RequestException as exc:
+
+            return APIResult(
+                success=False,
+                status="network_error",
+                message=str(exc),
+            )
+
+        data = self._json_response(response)
+
+        if response.status_code != 200:
+
+            self.clear_tokens()
+
+            return APIResult(
+                success=False,
+                status=data.get(
+                    "status",
+                    "refresh_token_expired",
+                ),
+                status_code=response.status_code,
+                data=data,
+                message=data.get("detail"),
+            )
 
         new_access_token = data.get("access_token")
 
         if not new_access_token:
+
             self.clear_tokens()
 
-            raise RuntimeError(
-                "Server returned an invalid access token."
+            return APIResult(
+                success=False,
+                status="invalid_refresh_response",
+                data=data,
             )
 
         self.access_token = new_access_token
 
-        return data
-
+        return APIResult(
+            success=True,
+            status="token_refreshed",
+            data=data,
+            status_code=response.status_code,
+        )
+    
     def request(
         self,
         method: str,
@@ -95,7 +219,7 @@ class APIClient:
         *,
         retry_on_401: bool = True,
         **kwargs,
-    ) -> requests.Response:
+    ) -> APIResult:
 
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
 
@@ -106,17 +230,26 @@ class APIClient:
                 f"Bearer {self.access_token}"
             )
 
-        response = self.session.request(
-            method=method,
-            url=url,
-            headers=headers,
-            timeout=self.timeout,
-            **kwargs,
-        )
+        try:
+            response = self.session.request(
+                method=method,
+                url=url,
+                headers=headers,
+                timeout=self.timeout,
+                **kwargs,
+            )
 
-        # --------------------------------------------------
-        # ACCESS TOKEN EXPIRED
-        # --------------------------------------------------
+        except requests.RequestException as exc:
+
+            return APIResult(
+                success=False,
+                status="network_error",
+                message=str(exc),
+            )
+
+        data = self._json_response(response)
+
+        # TOKEN EXPIRED
 
         if (
             response.status_code == 401
@@ -124,13 +257,17 @@ class APIClient:
             and self.refresh_token
         ):
 
-            self.refresh_access_token()
+            refresh_result = self.refresh_access_token()
 
+            if not refresh_result.success:
+                return refresh_result
+
+            # Update token
             headers["Authorization"] = (
                 f"Bearer {self.access_token}"
             )
 
-            # Prevent infinite refresh loop.
+            # Retry ONLY once
             return self.request(
                 method,
                 endpoint,
@@ -139,20 +276,42 @@ class APIClient:
                 **kwargs,
             )
 
-        return response
+        # HTTP ERROR
+
+        if not response.ok:
+
+            return APIResult(
+                success=False,
+                status=data.get(
+                    "status",
+                    "request_failed",
+                ),
+                status_code=response.status_code,
+                data=data,
+                message=data.get("detail"),
+            )
+
+        # SUCCESS
+
+        return APIResult(
+            success=True,
+            status="request_success",
+            status_code=response.status_code,
+            data=data,
+        )
 
     def clear_tokens(self):
-
         self.access_token = None
         self.refresh_token = None
 
     def logout(self):
-
         self.clear_tokens()
         self.session.cookies.clear()
 
+
 class ApiThread(QThread):
 
+    status = pyqtSignal(str)
     finished = pyqtSignal(object)
     error = pyqtSignal(Exception)
 
@@ -170,7 +329,10 @@ class ApiThread(QThread):
 
     def run(self):
 
+        self.status.emit("Running...")
+
         try:
+
             result = self.function(
                 *self.args,
                 **self.kwargs,
@@ -179,113 +341,181 @@ class ApiThread(QThread):
             self.finished.emit(result)
 
         except Exception as exc:
+
             self.error.emit(exc)
 
 
-apiRequest = APIClient(webhock)
+
+apiRequest = APIClient(BASE_URL,USER_ID)
 
 
+class MainWindow(QWidget):
 
-
-
-
-class mainwindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("DashBoad Main")
-        self.resize(600,600)
+        self.setWindowTitle("Dashboard")
+        self.resize(600, 400)
 
-        mainlayout = QVBoxLayout(self) ; mainlayout.setAlignment(Qt.AlignCenter)
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
 
-        btn_1 = QPushButton("Get Sold")
-        self.labelstatus = QLabel("status")
+        self.btn_sold = QPushButton("Get Sold")
+        self.label_status = QLabel("Ready")
 
-        mainlayout.addWidget(btn_1)
-        mainlayout.addWidget(self.labelstatus)
+        layout.addWidget(self.btn_sold)
+        layout.addWidget(self.label_status)
 
-        btn_1.clicked.connect(self.get_sold)
+        self.btn_sold.clicked.connect(self.get_sold)
 
+    # GET SOLD
+    
     def get_sold(self):
 
-        self.Tsold = ApiThread(
+        self.btn_sold.setEnabled(False)
+
+        self.thread_sold = ApiThread(
             apiRequest.request,
             "GET",
             "/api/v1/sold",
         )
-        self.Tsold.finished.connect(self.profile_received)
-        self.Tsold.error.connect(self.labelstatus.setText)
-        self.Tsold.start()
 
-    def profile_received(self,response):
-        pass
+        self.thread_sold.status.connect(self.label_status.setText)
+        self.thread_sold.finished.connect(self.profile_received)
+        self.thread_sold.error.connect(self.request_error)
+        self.thread_sold.start()
+
+    # RESPONSE
+    
+    def profile_received(
+        self,
+        result: APIResult,
+    ):
+
+        self.btn_sold.setEnabled(True)
+
+        if not result.success:
+
+            self.label_status.setText(
+                result.message
+                or result.status
+            )
+
+            return
+
+        data = result.data
+
+        sold = data.get("sold")
+
+        if sold is not None:
+
+            self.label_status.setText(
+                f"You have: {sold} Credit"
+            )
+
+        else:
+
+            self.label_status.setText(
+                data.get(
+                    "text",
+                    result.status,
+                )
+            )
+
+    # ERROR
+    
+    def request_error(self,error: Exception):
+        self.btn_sold.setEnabled(True)
+        self.label_status.setText(str(error))
 
 
+class PasswordWindow(QWidget):
 
-
-class passwordwindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("test my server")
-        self.resize(300,200)
+        self.setWindowTitle("Login")
+        self.resize(350, 220)
 
-        mainlayout = QVBoxLayout(self);mainlayout.setAlignment(Qt.AlignVCenter)
+        layout = QVBoxLayout(self)
 
-        btn_1 = QPushButton("LOGIN")
-        self.text1 = QLineEdit();self.text1.setPlaceholderText("username")
-        self.text2 = QLineEdit();self.text2.setPlaceholderText("password")
-        self.labelstatus = QLabel("status ...")
+        self.text_username = QLineEdit()
+        self.text_username.setPlaceholderText(
+            "Username"
+        )
 
-        mainlayout.addStretch()
-        mainlayout.addWidget(self.text1)
-        mainlayout.addWidget(self.text2)
-        mainlayout.addWidget(btn_1,alignment=Qt.AlignLeft)
-        mainlayout.addStretch()
-        mainlayout.addWidget(self.labelstatus,alignment=Qt.AlignCenter)
+        self.text_password = QLineEdit()
+        self.text_password.setPlaceholderText("Password")
 
-        btn_1.clicked.connect(self.Set_to_login)
+        self.text_password.setEchoMode(QLineEdit.Password)
 
+        self.btn_login = QPushButton("LOGIN")
 
-    def Set_to_login(self):
-        self.username = self.text1.text()
-        self.password = self.text2.text()
+        self.label_status = QLabel("Please login...")
 
-        if not self.username : self.text1.setFocus();return
-        if not self.password : self.text2.setFocus();return
+        layout.addWidget(self.text_username)
+        layout.addWidget(self.text_password)
+        layout.addWidget(self.btn_login)
+        layout.addWidget(self.label_status)
+
+        self.btn_login.clicked.connect(self.start_login)
+
+    def start_login(self):
+
+        username = self.text_username.text().strip()
+        password = self.text_password.text()
+
+        if not username:
+
+            self.text_username.setFocus()
+            return
+
+        if not password:
+
+            self.text_password.setFocus()
+            return
+
+        self.btn_login.setEnabled(False)
+        self.label_status.setText("Logging in...")
 
         self.thread_login = ApiThread(
             apiRequest.login,
-            self.username,
-            self.password,
+            username,
+            password,
         )
+
+        self.thread_login.status.connect(self.label_status.setText)
         self.thread_login.finished.connect(self.login_finished)
-        self.thread_login.error.connect(self.labelstatus.setText)
+        self.thread_login.error.connect(self.login_error)
         self.thread_login.start()
 
-    def login_finished(self,result):
+    def login_finished(self, result: APIResult):
+        if not result.success:
+            self.btn_login.setEnabled(True)
+            self.label_status.setText(result.message or result.status)
+            return
 
+        self.main_window = MainWindow()
+        self.main_window.show()
         self.close()
-        self.mwindow = mainwindow()
-        self.mwindow.show()
+    
+    def login_error(
+        self,
+        error: Exception,
+    ):
 
-
-
-
-
-
-
-
-
-
-
+        self.btn_login.setEnabled(True)
+        self.label_status.setText(str(error))
 
 
 
 if __name__ == "__main__":
+
     app = QApplication(sys.argv)
 
-    w= passwordwindow()
-    w.show()
+    window = PasswordWindow()
+    window.show()
 
-    app.exec_()
+    sys.exit(
+        app.exec_()
+    )
