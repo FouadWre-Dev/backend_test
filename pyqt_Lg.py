@@ -272,40 +272,6 @@ class passwordwindow(QWidget):
 
 
 
-class thread_sold(QThread):
-    status = pyqtSignal(str)
-    def __init__(self):
-        super().__init__()
-
-        self.token = generalInfoManager.accesstoken
-
-    def run(self):
-        self.status.emit("Loading ...")
-        self.msleep(50)
-        try:
-            rs = requests.get(f"{webhock}/api/v1/sold",
-                            headers={
-                                "Authorization" : f"Bearer {self.token}",
-                            },
-                            timeout=4
-                            )
-            response = rs.json()
-
-            _status = response.get("status")
-            if _status:
-                sold = response.get("sold")
-                self.status.emit(f"u have : {sold} Credit")
-                return
-
-            self.status.emit(response.get("text"))
-
-
-        except Exception as e:
-            self.status.emit(f"{e}")
-
-
-
-
 
 
 
